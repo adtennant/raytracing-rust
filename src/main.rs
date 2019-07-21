@@ -21,11 +21,15 @@ impl Vector3 {
     }
 
     fn length(&self) -> f64 {
-        (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
+        self.squared_length().sqrt()
     }
 
     fn normalized(&self) -> Vector3 {
         *self / self.length()
+    }
+
+    fn squared_length(&self) -> f64 {
+        self.x * self.x + self.y * self.y + self.z * self.z
     }
 }
 
@@ -119,6 +123,14 @@ impl std::ops::Add<Color> for Color {
 
     fn add(self, rhs: Color) -> Self::Output {
         Color::new(self.r + rhs.r, self.g + rhs.g, self.b + rhs.b)
+    }
+}
+
+impl std::ops::Mul<f64> for Color {
+    type Output = Self;
+
+    fn mul(self, rhs: f64) -> Self::Output {
+        Color::new(self.r * rhs, self.g * rhs, self.b * rhs)
     }
 }
 
@@ -238,9 +250,22 @@ impl Camera {
     }
 }
 
+fn random_in_unit_sphere() -> Vector3 {
+    let mut rng = rand::thread_rng();
+    let mut p = Vector3::new(rng.gen::<f64>(), rng.gen::<f64>(), rng.gen::<f64>()) * 2.0
+        - Vector3::new(1, 1, 1);
+    while p.squared_length() >= 1.0 {
+        p = Vector3::new(rng.gen::<f64>(), rng.gen::<f64>(), rng.gen::<f64>()) * 2.0
+            - Vector3::new(1, 1, 1);
+    }
+
+    p
+}
+
 fn color(ray: &Ray, world: &World) -> Color {
-    if let Some(hit) = world.hit(ray, 0.0, std::f64::MAX) {
-        Color::from(Vector3::new(hit.normal.x + 1.0, hit.normal.y + 1.0, hit.normal.z + 1.0) * 0.5)
+    if let Some(hit) = world.hit(ray, 0.001, std::f64::MAX) {
+        let target = hit.p + hit.normal + random_in_unit_sphere();
+        Color::from(color(&Ray::new(hit.p, target - hit.p), world) * 0.5)
     } else {
         let normalized_direction = ray.direction.normalized();
         let t = 0.5 * (normalized_direction.y + 1.0);
@@ -277,6 +302,8 @@ fn main() {
 
                 result + color
             }) / f64::from(num_samples);
+
+            let pixel = Color::new(pixel.r.sqrt(), pixel.g.sqrt(), pixel.b.sqrt());
 
             println!(
                 "{} {} {}",
