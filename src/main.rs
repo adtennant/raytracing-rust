@@ -22,6 +22,9 @@ struct Vec3 {
 }
 
 impl Vec3 {
+    fn dot(&self, other: &Vec3) -> f64 {
+        self.x * other.x + self.y * other.y + self.z * other.z
+    }
     fn length(&self) -> f64 {
         (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
     }
@@ -39,6 +42,18 @@ impl std::ops::Add<Vec3> for Vec3 {
             x: self.x + rhs.x,
             y: self.y + rhs.y,
             z: self.z + rhs.z,
+        }
+    }
+}
+
+impl std::ops::Sub<Vec3> for Vec3 {
+    type Output = Self;
+
+    fn sub(self, rhs: Vec3) -> Self::Output {
+        Vec3 {
+            x: self.x - rhs.x,
+            y: self.y - rhs.y,
+            z: self.z - rhs.z,
         }
     }
 }
@@ -72,7 +87,22 @@ struct Ray {
     direction: Vec3,
 }
 
+fn hit_sphere(ray: &Ray, center: Vec3, radius: f64) -> bool {
+    let oc = ray.origin.clone() - center;
+
+    let a = ray.direction.dot(&ray.direction);
+    let b = 2.0 * oc.dot(&ray.direction);
+    let c = oc.dot(&oc) - radius * radius;
+
+    let discriminant = b*b - 4.0*a*c;
+    discriminant > 0.0
+}
+
 fn color(ray: &Ray) -> Color {
+    if hit_sphere(ray, Vec3 { x: 0.0, y: 0.0, z: 1.0 }, 0.5) {
+        return Color { r: 1.0, g: 0.0, b: 0.0 };
+    }
+
     let normalized_direction = ray.direction.normalized();
     let t = 0.5 * (normalized_direction.y + 1.0);
 
