@@ -6,8 +6,12 @@ struct Vector3 {
 }
 
 impl Vector3 {
-    fn new(x: f64, y: f64, z: f64) -> Self {
-        Vector3 { x, y, z }
+    fn new(x: impl Into<f64>, y: impl Into<f64>, z: impl Into<f64>) -> Self {
+        Vector3 {
+            x: x.into(),
+            y: y.into(),
+            z: z.into(),
+        }
     }
 
     fn dot(&self, other: &Vector3) -> f64 {
@@ -76,15 +80,10 @@ struct Ray {
     direction: Vector3,
 }
 
-fn hit_sphere(ray: &Ray, center: Vector3, radius: f64) -> bool {
-    let oc = ray.origin - center;
-
-    let a = ray.direction.dot(&ray.direction);
-    let b = 2.0 * oc.dot(&ray.direction);
-    let c = oc.dot(&oc) - radius * radius;
-
-    let discriminant = b * b - 4.0 * a * c;
-    discriminant > 0.0
+impl Ray {
+    fn point_at(&self, distance: impl Into<f64>) -> Vector3 {
+        self.origin + (self.direction * distance.into())
+    }
 }
 
 struct Color {
@@ -103,19 +102,95 @@ impl From<Vector3> for Color {
     }
 }
 
-fn color(ray: &Ray) -> Color {
-    if hit_sphere(ray, Vector3::new(0.0, 0.0, -1.0), 0.5) {
-        return Color {
-            r: 1.0,
-            g: 0.0,
-            b: 0.0,
-        };
+struct Hit {
+    t: f64,
+    p: Vector3,
+    normal: Vector3,
+}
+
+trait Hitable {
+    fn hit(&self, ray: &Ray, t_min: f64, t_max: f64) -> Option<Hit>;
+}
+
+struct Sphere {
+    center: Vector3,
+    radius: f64,
+}
+
+impl Sphere {
+    fn new(center: Vector3, radius: impl Into<f64>) -> Self {
+        Sphere { center, radius: radius.into() }
     }
+}
 
-    let normalized_direction = ray.direction.normalized();
-    let t = 0.5 * (normalized_direction.y + 1.0);
+impl Hitable for Sphere {
+    fn hit(&self, ray: &Ray, t_min: f64, t_max: f64) -> Option<Hit> {
+        let oc = ray.origin - self.center;
 
-    Color::from(Vector3::new(1.0, 1.0, 1.0) * (1.0 - t) + Vector3::new(0.5, 0.7, 1.0) * t)
+        let a = ray.direction.dot(&ray.direction);
+        let b = oc.dot(&ray.direction);
+        let c = oc.dot(&oc) - self.radius * self.radius;
+
+        let discriminant = b * b - a * c;
+
+        if discriminant > 0.0 {
+            let t = (-b - discriminant.sqrt()) / a;
+
+            if t > t_min && t < t_max {
+                let p = ray.point_at(t);
+
+                return Some(Hit {
+                    t,
+                    p,
+                    normal: (p - self.center) / self.radius,
+                });
+            }
+
+            let t = (-b + discriminant.sqrt()) / a;
+
+            if t > t_min && t < t_max {
+                let p = ray.point_at(t);
+
+                return Some(Hit {
+                    t,
+                    p,
+                    normal: (p - self.center) / self.radius,
+                });
+            }
+        }
+
+        None
+    }
+}
+
+struct World(Vec<Box<Hitable>>);
+
+impl World {
+    fn hit(&self, ray: &Ray, t_min: f64, t_max: f64) -> Option<Hit> {
+        let mut nearest_t = t_max;
+        self.0
+            .iter()
+            .filter_map(|h| h.hit(ray, t_min, t_max))
+            .fold(None, |result, h| {
+                if h.t < nearest_t {
+                    nearest_t = h.t;
+                    Some(h)
+                } else {
+                    result
+                }
+            })
+    }
+}
+
+fn color(ray: &Ray, world: &World) -> Color {
+    if let Some(hit) = world.hit(ray, 0.0, std::f64::MAX) {
+        Color::from(Vector3::new(hit.normal.x + 1.0, hit.normal.y + 1.0, hit.normal.z + 1.0) * 0.5)
+    } else {
+        let normalized_direction = ray.direction.normalized();
+        let t = 0.5 * (normalized_direction.y + 1.0);
+
+        Color::from(Vector3::new(1.0, 1.0, 1.0) * (1.0 - t) + Vector3::new(0.5, 0.7, 1.0) * t)
+    }
 }
 
 fn main() {
@@ -131,6 +206,11 @@ fn main() {
     let vertical = Vector3::new(0.0, 2.0, 0.0);
     let origin = Vector3::new(0.0, 0.0, 0.0);
 
+    let sphere1 = Sphere::new(Vector3::new(0.0, 0.0, -1.0), 0.5);
+    let sphere2 = Sphere::new(Vector3::new(0.0, -100.5, -1.0), 100.0);
+
+    let world = World(vec![Box::new(sphere1), Box::new(sphere2)]);
+
     for y in (0..height).rev() {
         for x in 0..width {
             let u = f64::from(x) / f64::from(width);
@@ -140,7 +220,7 @@ fn main() {
                 origin,
                 direction: lower_left + horizontal * u + vertical * v,
             };
-            let color = color(&r);
+            let color = color(&r, &world);
 
             println!(
                 "{} {} {}",
