@@ -28,6 +28,10 @@ impl Vector3 {
         *self / self.length()
     }
 
+    fn reflect(&self, n: &Vector3) -> Vector3 {
+        *self - *n * self.dot(n) * 2.0
+    }
+
     fn squared_length(&self) -> f64 {
         self.x * self.x + self.y * self.y + self.z * self.z
     }
@@ -53,6 +57,18 @@ impl std::ops::Sub<Vector3> for Vector3 {
             x: self.x - rhs.x,
             y: self.y - rhs.y,
             z: self.z - rhs.z,
+        }
+    }
+}
+
+impl std::ops::Mul<Vector3> for Vector3 {
+    type Output = Self;
+
+    fn mul(self, rhs: Vector3) -> Self::Output {
+        Vector3 {
+            x: self.x * rhs.x,
+            y: self.y * rhs.y,
+            z: self.z * rhs.z,
         }
     }
 }
@@ -142,10 +158,39 @@ impl std::ops::Div<f64> for Color {
     }
 }
 
+#[derive(Clone, Copy)]
+enum Material {
+    Lambertian { albedo: Vector3 },
+    Metal { albedo: Vector3, fuzz: f64 },
+}
+
+impl Material {
+    fn scatter(&self, ray: &Ray, hit: &Hit) -> Option<(Ray, Vector3)> {
+        match self {
+            Material::Lambertian { albedo } => {
+                let target = hit.p + hit.normal + random_in_unit_sphere();
+                let scattered = Ray::new(hit.p, target - hit.p);
+                Some((scattered, *albedo))
+            }
+            Material::Metal { albedo, fuzz } => {
+                let reflected = ray.direction.normalized().reflect(&hit.normal);
+                let scattered = Ray::new(hit.p, reflected + random_in_unit_sphere() * *fuzz);
+
+                if scattered.direction.dot(&hit.normal) > 0.0 {
+                    Some((scattered, *albedo))
+                } else {
+                    None
+                }
+            }
+        }
+    }
+}
+
 struct Hit {
     t: f64,
     p: Vector3,
     normal: Vector3,
+    material: Material,
 }
 
 trait Hitable {
@@ -155,13 +200,15 @@ trait Hitable {
 struct Sphere {
     center: Vector3,
     radius: f64,
+    material: Material,
 }
 
 impl Sphere {
-    fn new(center: Vector3, radius: impl Into<f64>) -> Self {
+    fn new(center: Vector3, radius: impl Into<f64>, material: Material) -> Self {
         Sphere {
             center,
             radius: radius.into(),
+            material,
         }
     }
 }
@@ -186,6 +233,7 @@ impl Hitable for Sphere {
                     t,
                     p,
                     normal: (p - self.center) / self.radius,
+                    material: self.material,
                 });
             }
 
@@ -198,6 +246,7 @@ impl Hitable for Sphere {
                     t,
                     p,
                     normal: (p - self.center) / self.radius,
+                    material: self.material,
                 });
             }
         }
@@ -262,15 +311,22 @@ fn random_in_unit_sphere() -> Vector3 {
     p
 }
 
-fn color(ray: &Ray, world: &World) -> Color {
+fn color(ray: &Ray, world: &World, depth: i64) -> Vector3 {
     if let Some(hit) = world.hit(ray, 0.001, std::f64::MAX) {
-        let target = hit.p + hit.normal + random_in_unit_sphere();
-        Color::from(color(&Ray::new(hit.p, target - hit.p), world) * 0.5)
+        if depth < 50 {
+            if let Some((scattered, attenuation)) = hit.material.scatter(ray, &hit) {
+                attenuation * color(&scattered, world, depth + 1)
+            } else {
+                Vector3::new(0, 0, 0)
+            }
+        } else {
+            Vector3::new(0, 0, 0)
+        }
     } else {
         let normalized_direction = ray.direction.normalized();
         let t = 0.5 * (normalized_direction.y + 1.0);
 
-        Color::from(Vector3::new(1.0, 1.0, 1.0) * (1.0 - t) + Vector3::new(0.5, 0.7, 1.0) * t)
+        Vector3::new(1.0, 1.0, 1.0) * (1.0 - t) + Vector3::new(0.5, 0.7, 1.0) * t
     }
 }
 
@@ -285,10 +341,43 @@ fn main() {
     println!("{} {}", width, height);
     println!("255");
 
-    let sphere1 = Sphere::new(Vector3::new(0.0, 0.0, -1.0), 0.5);
-    let sphere2 = Sphere::new(Vector3::new(0.0, -100.5, -1.0), 100.0);
+    let sphere1 = Sphere::new(
+        Vector3::new(0.0, 0.0, -1.0),
+        0.5,
+        Material::Lambertian {
+            albedo: Vector3::new(0.8, 0.3, 0.3),
+        },
+    );
+    let sphere2 = Sphere::new(
+        Vector3::new(0.0, -100.5, -1.0),
+        100.0,
+        Material::Lambertian {
+            albedo: Vector3::new(0.8, 0.8, 0.0),
+        },
+    );
+    let sphere3 = Sphere::new(
+        Vector3::new(1.0, 0.0, -1.0),
+        0.5,
+        Material::Metal {
+            albedo: Vector3::new(0.8, 0.6, 0.2),
+            fuzz: 0.3,
+        },
+    );
+    let sphere4 = Sphere::new(
+        Vector3::new(-1.0, 0.0, -1.0),
+        0.5,
+        Material::Metal {
+            albedo: Vector3::new(0.8, 0.8, 0.8),
+            fuzz: 1.0,
+        },
+    );
 
-    let world = World(vec![Box::new(sphere1), Box::new(sphere2)]);
+    let world = World(vec![
+        Box::new(sphere1),
+        Box::new(sphere2),
+        Box::new(sphere3),
+        Box::new(sphere4),
+    ]);
     let camera = Camera::new();
 
     for y in (0..height).rev() {
@@ -298,7 +387,7 @@ fn main() {
                 let v = (f64::from(y) + rng.gen::<f64>()) / f64::from(height);
 
                 let r = camera.ray(u, v);
-                let color = color(&r, &world);
+                let color = Color::from(color(&r, &world, 0));
 
                 result + color
             }) / f64::from(num_samples);
