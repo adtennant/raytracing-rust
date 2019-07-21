@@ -1,3 +1,9 @@
+struct Color {
+    r: f64.
+    g: f64,
+    b: f64.
+}
+
 fn main() {
     let width = 200;
     let height = 100;
@@ -8,11 +14,18 @@ fn main() {
 
     for y in (0..height).rev() {
         for x in 0..width {
-            let r = f64::from(x) / f64::from(width);
-            let g = f64::from(y) / f64::from(height);
-            let b = 0.2;
+            let color = Color {
+                r: f64::from(x) / f64::from(width),
+                g: f64::from(y) / f64::from(height),
+                b: 0.2,
+            };
 
-            println!("{} {} {}", (r * 255.99) as u8, (g * 255.99) as u8, (b * 255.99) as u8);
+            println!(
+                "{} {} {}",
+                (color.r * 255.99) as u8,
+                (color.g * 255.99) as u8,
+                (color.b * 255.99) as u8
+            );
         }
     }
 }
