@@ -1,3 +1,5 @@
+use rand::prelude::*;
+
 #[derive(Clone, Copy)]
 struct Vector3 {
     x: f64,
@@ -81,6 +83,10 @@ struct Ray {
 }
 
 impl Ray {
+    fn new(origin: Vector3, direction: Vector3) -> Self {
+        Ray { origin, direction }
+    }
+
     fn point_at(&self, distance: impl Into<f64>) -> Vector3 {
         self.origin + (self.direction * distance.into())
     }
@@ -92,13 +98,35 @@ struct Color {
     b: f64,
 }
 
+impl Color {
+    fn new(r: impl Into<f64>, g: impl Into<f64>, b: impl Into<f64>) -> Self {
+        Color {
+            r: r.into(),
+            g: g.into(),
+            b: b.into(),
+        }
+    }
+}
+
 impl From<Vector3> for Color {
     fn from(vec: Vector3) -> Self {
-        Color {
-            r: vec.x,
-            g: vec.y,
-            b: vec.z,
-        }
+        Color::new(vec.x, vec.y, vec.z)
+    }
+}
+
+impl std::ops::Add<Color> for Color {
+    type Output = Self;
+
+    fn add(self, rhs: Color) -> Self::Output {
+        Color::new(self.r + rhs.r, self.g + rhs.g, self.b + rhs.b)
+    }
+}
+
+impl std::ops::Div<f64> for Color {
+    type Output = Self;
+
+    fn div(self, rhs: f64) -> Self::Output {
+        Color::new(self.r / rhs, self.g / rhs, self.b / rhs)
     }
 }
 
@@ -119,7 +147,10 @@ struct Sphere {
 
 impl Sphere {
     fn new(center: Vector3, radius: impl Into<f64>) -> Self {
-        Sphere { center, radius: radius.into() }
+        Sphere {
+            center,
+            radius: radius.into(),
+        }
     }
 }
 
@@ -182,6 +213,31 @@ impl World {
     }
 }
 
+struct Camera {
+    origin: Vector3,
+    lower_left: Vector3,
+    horizontal: Vector3,
+    vertical: Vector3,
+}
+
+impl Camera {
+    fn new() -> Self {
+        Camera {
+            origin: Vector3::new(0.0, 0.0, 0.0),
+            lower_left: Vector3::new(-2.0, -1.0, -1.0),
+            horizontal: Vector3::new(4.0, 0.0, 0.0),
+            vertical: Vector3::new(0.0, 2.0, 0.0),
+        }
+    }
+
+    fn ray(&self, u: f64, v: f64) -> Ray {
+        Ray::new(
+            self.origin,
+            self.lower_left + self.horizontal * u + self.vertical * v - self.origin,
+        )
+    }
+}
+
 fn color(ray: &Ray, world: &World) -> Color {
     if let Some(hit) = world.hit(ray, 0.0, std::f64::MAX) {
         Color::from(Vector3::new(hit.normal.x + 1.0, hit.normal.y + 1.0, hit.normal.z + 1.0) * 0.5)
@@ -196,37 +252,37 @@ fn color(ray: &Ray, world: &World) -> Color {
 fn main() {
     let width = 200;
     let height = 100;
+    let num_samples = 100;
+
+    let mut rng = rand::thread_rng();
 
     println!("P3");
     println!("{} {}", width, height);
     println!("255");
 
-    let lower_left = Vector3::new(-2.0, -1.0, -1.0);
-    let horizontal = Vector3::new(4.0, 0.0, 0.0);
-    let vertical = Vector3::new(0.0, 2.0, 0.0);
-    let origin = Vector3::new(0.0, 0.0, 0.0);
-
     let sphere1 = Sphere::new(Vector3::new(0.0, 0.0, -1.0), 0.5);
     let sphere2 = Sphere::new(Vector3::new(0.0, -100.5, -1.0), 100.0);
 
     let world = World(vec![Box::new(sphere1), Box::new(sphere2)]);
+    let camera = Camera::new();
 
     for y in (0..height).rev() {
         for x in 0..width {
-            let u = f64::from(x) / f64::from(width);
-            let v = f64::from(y) / f64::from(height);
+            let pixel = (0..num_samples).fold(Color::new(0, 0, 0), |result, _| {
+                let u = (f64::from(x) + rng.gen::<f64>()) / f64::from(width);
+                let v = (f64::from(y) + rng.gen::<f64>()) / f64::from(height);
 
-            let r = Ray {
-                origin,
-                direction: lower_left + horizontal * u + vertical * v,
-            };
-            let color = color(&r, &world);
+                let r = camera.ray(u, v);
+                let color = color(&r, &world);
+
+                result + color
+            }) / f64::from(num_samples);
 
             println!(
                 "{} {} {}",
-                (color.r * 255.99) as u8,
-                (color.g * 255.99) as u8,
-                (color.b * 255.99) as u8
+                (pixel.r * 255.99) as u8,
+                (pixel.g * 255.99) as u8,
+                (pixel.b * 255.99) as u8
             );
         }
     }
