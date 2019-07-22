@@ -1,3 +1,6 @@
+#![allow(unknown_lints)]
+#![warn(clippy::all)]
+
 use rand::prelude::*;
 
 #[derive(Clone, Copy)]
@@ -13,6 +16,19 @@ impl Vector3 {
             x: x.into(),
             y: y.into(),
             z: z.into(),
+        }
+    }
+
+    fn random_in_unit_sphere() -> Self {
+        let mut rng = rand::thread_rng();
+
+        loop {
+            let p = Vector3::new(rng.gen::<f64>(), rng.gen::<f64>(), rng.gen::<f64>()) * 2.0
+                - Vector3::new(1, 1, 1);
+
+            if p.squared_length() < 1.0 {
+                break p;
+            }
         }
     }
 
@@ -166,18 +182,21 @@ enum Material {
 
 impl Material {
     fn scatter(&self, ray: &Ray, hit: &Hit) -> Option<(Ray, Vector3)> {
-        match self {
+        match *self {
             Material::Lambertian { albedo } => {
-                let target = hit.p + hit.normal + random_in_unit_sphere();
-                let scattered = Ray::new(hit.p, target - hit.p);
-                Some((scattered, *albedo))
+                let target = hit.position + hit.normal + Vector3::random_in_unit_sphere();
+                let scattered = Ray::new(hit.position, target - hit.position);
+                Some((scattered, albedo))
             }
             Material::Metal { albedo, fuzz } => {
                 let reflected = ray.direction.normalized().reflect(&hit.normal);
-                let scattered = Ray::new(hit.p, reflected + random_in_unit_sphere() * *fuzz);
+                let scattered = Ray::new(
+                    hit.position,
+                    reflected + Vector3::random_in_unit_sphere() * fuzz,
+                );
 
                 if scattered.direction.dot(&hit.normal) > 0.0 {
-                    Some((scattered, *albedo))
+                    Some((scattered, albedo))
                 } else {
                     None
                 }
@@ -187,85 +206,105 @@ impl Material {
 }
 
 struct Hit {
-    t: f64,
-    p: Vector3,
+    distance: f64,
+    position: Vector3,
     normal: Vector3,
     material: Material,
 }
 
-trait Hitable {
-    fn hit(&self, ray: &Ray, t_min: f64, t_max: f64) -> Option<Hit>;
+enum Shape {
+    Sphere {
+        center: Vector3,
+        radius: f64,
+        material: Material,
+    },
 }
 
-struct Sphere {
-    center: Vector3,
-    radius: f64,
-    material: Material,
-}
-
-impl Sphere {
-    fn new(center: Vector3, radius: impl Into<f64>, material: Material) -> Self {
-        Sphere {
+impl Shape {
+    fn sphere(center: Vector3, radius: impl Into<f64>, material: Material) -> Self {
+        Shape::Sphere {
             center,
             radius: radius.into(),
             material,
         }
     }
-}
 
-impl Hitable for Sphere {
-    fn hit(&self, ray: &Ray, t_min: f64, t_max: f64) -> Option<Hit> {
-        let oc = ray.origin - self.center;
+    fn hit(
+        &self,
+        ray: &Ray,
+        min_distance: impl Into<f64>,
+        max_distance: impl Into<f64>,
+    ) -> Option<Hit> {
+        let min_distance = min_distance.into();
+        let max_distance = max_distance.into();
 
-        let a = ray.direction.dot(&ray.direction);
-        let b = oc.dot(&ray.direction);
-        let c = oc.dot(&oc) - self.radius * self.radius;
+        match *self {
+            Shape::Sphere {
+                center,
+                radius,
+                material,
+            } => {
+                let oc = ray.origin - center;
 
-        let discriminant = b * b - a * c;
+                let a = ray.direction.dot(&ray.direction);
+                let b = oc.dot(&ray.direction);
+                let c = oc.dot(&oc) - radius * radius;
 
-        if discriminant > 0.0 {
-            let t = (-b - discriminant.sqrt()) / a;
+                let discriminant = b * b - a * c;
 
-            if t > t_min && t < t_max {
-                let p = ray.point_at(t);
+                if discriminant > 0.0 {
+                    let distance = (-b - discriminant.sqrt()) / a;
 
-                return Some(Hit {
-                    t,
-                    p,
-                    normal: (p - self.center) / self.radius,
-                    material: self.material,
-                });
-            }
+                    if distance > min_distance && distance < max_distance {
+                        let position = ray.point_at(distance);
 
-            let t = (-b + discriminant.sqrt()) / a;
+                        return Some(Hit {
+                            distance,
+                            position,
+                            normal: (position - center) / radius,
+                            material,
+                        });
+                    }
 
-            if t > t_min && t < t_max {
-                let p = ray.point_at(t);
+                    let distance = (-b + discriminant.sqrt()) / a;
 
-                return Some(Hit {
-                    t,
-                    p,
-                    normal: (p - self.center) / self.radius,
-                    material: self.material,
-                });
+                    if distance > min_distance && distance < max_distance {
+                        let position = ray.point_at(distance);
+
+                        return Some(Hit {
+                            distance,
+                            position,
+                            normal: (position - center) / radius,
+                            material,
+                        });
+                    }
+                }
+
+                None
             }
         }
-
-        None
     }
 }
 
-struct World(Vec<Box<Hitable>>);
+struct World(Vec<Shape>);
 
 impl World {
-    fn hit(&self, ray: &Ray, t_min: f64, t_max: f64) -> Option<Hit> {
-        let mut nearest_t = t_max;
+    fn hit(
+        &self,
+        ray: &Ray,
+        min_distance: impl Into<f64>,
+        max_distance: impl Into<f64>,
+    ) -> Option<Hit> {
+        let min_distance = min_distance.into();
+        let max_distance = max_distance.into();
+
+        let mut nearest = max_distance;
         self.0
             .iter()
-            .filter_map(|h| h.hit(ray, t_min, t_max))
+            .filter_map(|h| h.hit(ray, min_distance, max_distance))
             .fold(None, |result, h| {
-                if h.t < nearest_t {
-                    nearest_t = h.t;
+                if h.distance < nearest {
+                    nearest = h.distance;
                     Some(h)
                 } else {
                     result
@@ -291,36 +330,21 @@ impl Camera {
         }
     }
 
-    fn ray(&self, u: f64, v: f64) -> Ray {
+    fn ray(&self, u: impl Into<f64>, v: impl Into<f64>) -> Ray {
         Ray::new(
             self.origin,
-            self.lower_left + self.horizontal * u + self.vertical * v - self.origin,
+            self.lower_left + self.horizontal * u.into() + self.vertical * v.into() - self.origin,
         )
     }
 }
 
-fn random_in_unit_sphere() -> Vector3 {
-    let mut rng = rand::thread_rng();
-    let mut p = Vector3::new(rng.gen::<f64>(), rng.gen::<f64>(), rng.gen::<f64>()) * 2.0
-        - Vector3::new(1, 1, 1);
-    while p.squared_length() >= 1.0 {
-        p = Vector3::new(rng.gen::<f64>(), rng.gen::<f64>(), rng.gen::<f64>()) * 2.0
-            - Vector3::new(1, 1, 1);
-    }
-
-    p
-}
-
 fn color(ray: &Ray, world: &World, depth: i64) -> Vector3 {
     if let Some(hit) = world.hit(ray, 0.001, std::f64::MAX) {
-        if depth < 50 {
-            if let Some((scattered, attenuation)) = hit.material.scatter(ray, &hit) {
-                attenuation * color(&scattered, world, depth + 1)
-            } else {
-                Vector3::new(0, 0, 0)
+        match hit.material.scatter(ray, &hit) {
+            Some((ref scattered, attenuation)) if depth < 50 => {
+                attenuation * color(scattered, world, depth + 1)
             }
-        } else {
-            Vector3::new(0, 0, 0)
+            _ => Vector3::new(0, 0, 0),
         }
     } else {
         let normalized_direction = ray.direction.normalized();
@@ -341,21 +365,21 @@ fn main() {
     println!("{} {}", width, height);
     println!("255");
 
-    let sphere1 = Sphere::new(
+    let sphere1 = Shape::sphere(
         Vector3::new(0.0, 0.0, -1.0),
         0.5,
         Material::Lambertian {
             albedo: Vector3::new(0.8, 0.3, 0.3),
         },
     );
-    let sphere2 = Sphere::new(
+    let sphere2 = Shape::sphere(
         Vector3::new(0.0, -100.5, -1.0),
         100.0,
         Material::Lambertian {
             albedo: Vector3::new(0.8, 0.8, 0.0),
         },
     );
-    let sphere3 = Sphere::new(
+    let sphere3 = Shape::sphere(
         Vector3::new(1.0, 0.0, -1.0),
         0.5,
         Material::Metal {
@@ -363,7 +387,7 @@ fn main() {
             fuzz: 0.3,
         },
     );
-    let sphere4 = Sphere::new(
+    let sphere4 = Shape::sphere(
         Vector3::new(-1.0, 0.0, -1.0),
         0.5,
         Material::Metal {
@@ -372,12 +396,7 @@ fn main() {
         },
     );
 
-    let world = World(vec![
-        Box::new(sphere1),
-        Box::new(sphere2),
-        Box::new(sphere3),
-        Box::new(sphere4),
-    ]);
+    let world = World(vec![sphere1, sphere2, sphere3, sphere4]);
     let camera = Camera::new();
 
     for y in (0..height).rev() {
@@ -396,9 +415,9 @@ fn main() {
 
             println!(
                 "{} {} {}",
-                (pixel.r * 255.99) as u8,
-                (pixel.g * 255.99) as u8,
-                (pixel.b * 255.99) as u8
+                (pixel.r * 255.0) as u8,
+                (pixel.g * 255.0) as u8,
+                (pixel.b * 255.0) as u8
             );
         }
     }
