@@ -410,7 +410,10 @@ impl Camera {
 
         Camera {
             origin,
-            lower_left: origin - right * half_width * focus_distance - up * half_height * focus_distance - forward * focus_distance,
+            lower_left: origin
+                - right * half_width * focus_distance
+                - up * half_height * focus_distance
+                - forward * focus_distance,
             horizontal: right * 2.0 * half_width * focus_distance,
             vertical: up * 2.0 * half_height * focus_distance,
             right,
@@ -448,6 +451,95 @@ fn color(ray: &Ray, world: &World, depth: i64) -> Vector3 {
     }
 }
 
+fn random_scene() -> World {
+    let mut scene = vec![
+        Shape::sphere(
+            Vector3::new(0, -1000, -1),
+            1000,
+            Material::Lambertian {
+                albedo: Vector3::new(0.5, 0.5, 0.5),
+            },
+        ),
+        Shape::sphere(
+            Vector3::new(0, 1, 0),
+            1,
+            Material::Dielectric {
+                refractive_index: 1.5,
+            },
+        ),
+        Shape::sphere(
+            Vector3::new(-4, 1, 0),
+            1,
+            Material::Lambertian {
+                albedo: Vector3::new(0.4, 0.2, 0.1),
+            },
+        ),
+        Shape::sphere(
+            Vector3::new(4, 1, 0),
+            1,
+            Material::Metal {
+                albedo: Vector3::new(0.7, 0.6, 0.5),
+                fuzz: 0.0,
+            },
+        ),
+    ];
+
+    let mut rng = rand::thread_rng();
+
+    for a in -11..11 {
+        for b in -11..11 {
+            let center = Vector3::new(
+                f64::from(a) + 0.9 * rng.gen::<f64>(),
+                0.2,
+                f64::from(b) + 0.9 + rng.gen::<f64>(),
+            );
+
+            if (center - Vector3::new(4, 0.2, 0)).length() > 0.9 {
+                match rng.gen::<f64>() {
+                    x if x >= 0.0 && x < 0.8 => {
+                        scene.push(Shape::sphere(
+                            center,
+                            0.2,
+                            Material::Lambertian {
+                                albedo: Vector3::new(
+                                    rng.gen::<f64>() * rng.gen::<f64>(),
+                                    rng.gen::<f64>() * rng.gen::<f64>(),
+                                    rng.gen::<f64>() * rng.gen::<f64>(),
+                                ),
+                            },
+                        ));
+                    }
+                    x if x >= 0.8 && x < 0.95 => {
+                        scene.push(Shape::sphere(
+                            center,
+                            0.2,
+                            Material::Metal {
+                                albedo: Vector3::new(
+                                    0.5 * (1.0 + rng.gen::<f64>()),
+                                    0.5 * (1.0 + rng.gen::<f64>()),
+                                    0.5 * (1.0 + rng.gen::<f64>()),
+                                ),
+                                fuzz: 0.5 * rng.gen::<f64>(),
+                            },
+                        ));
+                    }
+                    _ => {
+                        scene.push(Shape::sphere(
+                            center,
+                            0.2,
+                            Material::Dielectric {
+                                refractive_index: 1.5,
+                            },
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    World(scene)
+}
+
 fn main() {
     let width = 200;
     let height = 100;
@@ -459,52 +551,18 @@ fn main() {
     println!("{} {}", width, height);
     println!("255");
 
-    let sphere1 = Shape::sphere(
-        Vector3::new(0.0, 0.0, -1.0),
-        0.5,
-        Material::Lambertian {
-            albedo: Vector3::new(0.1, 0.2, 0.5),
-        },
-    );
-    let sphere2 = Shape::sphere(
-        Vector3::new(0.0, -100.5, -1.0),
-        100.0,
-        Material::Lambertian {
-            albedo: Vector3::new(0.8, 0.8, 0.0),
-        },
-    );
-    let sphere3 = Shape::sphere(
-        Vector3::new(1.0, 0.0, -1.0),
-        0.5,
-        Material::Metal {
-            albedo: Vector3::new(0.8, 0.6, 0.2),
-            fuzz: 0.3,
-        },
-    );
-    let sphere4 = Shape::sphere(
-        Vector3::new(-1.0, 0.0, -1.0),
-        0.5,
-        Material::Dielectric {
-            refractive_index: 1.5,
-        },
-    );
-    let sphere5 = Shape::sphere(
-        Vector3::new(-1.0, 0.0, -1.0),
-        -0.45,
-        Material::Dielectric {
-            refractive_index: 1.5,
-        },
-    );
+    let world = random_scene();
 
-    let world = World(vec![sphere1, sphere2, sphere3, sphere4, sphere5]);
+    let origin = Vector3::new(16, 2, 4);
+    let target = Vector3::new(0, 0, 0);
     let camera = Camera::new(
-        Vector3::new(3, 3, 2),
-        Vector3::new(0, 0, -1),
+        origin,
+        target,
         Vector3::new(0, 1, 0),
-        20,
+        15,
         f64::from(width) / f64::from(height),
-        2,
-        (Vector3::new(3, 3, 2) - Vector3::new(0, 0, -1)).length(),
+        0.2,
+        (origin - target).length(),
     );
 
     for y in (0..height).rev() {
