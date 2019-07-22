@@ -383,30 +383,51 @@ struct Camera {
     lower_left: Vector3,
     horizontal: Vector3,
     vertical: Vector3,
+    right: Vector3,
+    up: Vector3,
+    lens_radius: f64,
 }
 
 impl Camera {
-    fn new(origin: Vector3, target: Vector3, up: Vector3, vfov: impl Into<f64>, aspect: impl Into<f64>) -> Self {
+    fn new(
+        origin: Vector3,
+        target: Vector3,
+        up: Vector3,
+        vfov: impl Into<f64>,
+        aspect: impl Into<f64>,
+        aperture: impl Into<f64>,
+        focus_distance: impl Into<f64>,
+    ) -> Self {
         let theta = vfov.into() * std::f64::consts::PI / 180.0;
         let half_height = (theta / 2.0).tan();
         let half_width = aspect.into() * half_height;
 
-        let w = (origin - target).normalized();
-        let u = up.cross(&w).normalized();
-        let v = w.cross(&u);
+        let forward = (origin - target).normalized();
+        let right = up.cross(&forward).normalized();
+        let up = forward.cross(&right);
+
+        let focus_distance = focus_distance.into();
 
         Camera {
             origin,
-            lower_left: origin - u * half_width - v * half_height - w,
-            horizontal: u * 2.0 * half_width,
-            vertical: v * 2.0 * half_height,
+            lower_left: origin - right * half_width * focus_distance - up * half_height * focus_distance - forward * focus_distance,
+            horizontal: right * 2.0 * half_width * focus_distance,
+            vertical: up * 2.0 * half_height * focus_distance,
+            right,
+            up,
+            lens_radius: aperture.into() / 2.0,
         }
     }
 
     fn ray(&self, u: impl Into<f64>, v: impl Into<f64>) -> Ray {
+        let rd = Vector3::random_in_unit_sphere() * self.lens_radius;
+        let offset = self.right * rd.x + self.up * rd.y;
+
         Ray::new(
-            self.origin,
-            self.lower_left + self.horizontal * u.into() + self.vertical * v.into() - self.origin,
+            self.origin + offset,
+            self.lower_left + self.horizontal * u.into() + self.vertical * v.into()
+                - self.origin
+                - offset,
         )
     }
 }
@@ -477,11 +498,13 @@ fn main() {
 
     let world = World(vec![sphere1, sphere2, sphere3, sphere4, sphere5]);
     let camera = Camera::new(
-        Vector3::new(-2, 2, 1),
+        Vector3::new(3, 3, 2),
         Vector3::new(0, 0, -1),
         Vector3::new(0, 1, 0),
-        30,
+        20,
         f64::from(width) / f64::from(height),
+        2,
+        (Vector3::new(3, 3, 2) - Vector3::new(0, 0, -1)).length(),
     );
 
     for y in (0..height).rev() {
