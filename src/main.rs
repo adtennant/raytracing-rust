@@ -48,8 +48,32 @@ impl Vector3 {
         *self - *n * self.dot(n) * 2.0
     }
 
+    fn refract(&self, n: &Vector3, ni_over_nt: f64) -> Option<Vector3> {
+        let uv = self.normalized();
+        let dt = uv.dot(n);
+        let discriminant = 1.0 - ni_over_nt * ni_over_nt * (1.0 - dt * dt);
+
+        if discriminant > 0.0 {
+            Some((uv - *n * dt) * ni_over_nt - *n * discriminant.sqrt())
+        } else {
+            None
+        }
+    }
+
     fn squared_length(&self) -> f64 {
         self.x * self.x + self.y * self.y + self.z * self.z
+    }
+}
+
+impl std::ops::Neg for Vector3 {
+    type Output = Self;
+
+    fn neg(self) -> Self::Output {
+        Vector3 {
+            x: -self.x,
+            y: -self.y,
+            z: -self.z,
+        }
     }
 }
 
@@ -174,10 +198,18 @@ impl std::ops::Div<f64> for Color {
     }
 }
 
+fn schlick(cosine: f64, refractive_index: f64) -> f64 {
+    let r0 = (1.0 - refractive_index) / (1.0 + refractive_index);
+    let r0 = r0 * r0;
+
+    r0 + (1.0 - r0) * (1.0 - cosine).powf(5.0)
+}
+
 #[derive(Clone, Copy)]
 enum Material {
     Lambertian { albedo: Vector3 },
     Metal { albedo: Vector3, fuzz: f64 },
+    Dielectric { refractive_index: f64 },
 }
 
 impl Material {
@@ -200,6 +232,31 @@ impl Material {
                 } else {
                     None
                 }
+            }
+            Material::Dielectric { refractive_index } => {
+                let (outward_normal, ni_over_nt, cosine) = if ray.direction.dot(&hit.normal) > 0.0 {
+                    (
+                        -hit.normal,
+                        refractive_index,
+                        refractive_index * ray.direction.dot(&hit.normal) / ray.direction.length(),
+                    )
+                } else {
+                    (
+                        hit.normal,
+                        1.0 / refractive_index,
+                        -ray.direction.dot(&hit.normal) / ray.direction.length(),
+                    )
+                };
+
+                let scattered = match ray.direction.refract(&outward_normal, ni_over_nt) {
+                    Some(refracted) if random::<f64>() >= schlick(cosine, refractive_index) => {
+                        Ray::new(hit.position, refracted)
+                    }
+                    _ => Ray::new(hit.position, ray.direction.reflect(&hit.normal)),
+                };
+                let attenuation = Vector3::new(1.0, 1.0, 1.0);
+
+                Some((scattered, attenuation))
             }
         }
     }
@@ -369,7 +426,7 @@ fn main() {
         Vector3::new(0.0, 0.0, -1.0),
         0.5,
         Material::Lambertian {
-            albedo: Vector3::new(0.8, 0.3, 0.3),
+            albedo: Vector3::new(0.1, 0.2, 0.5),
         },
     );
     let sphere2 = Shape::sphere(
@@ -390,13 +447,19 @@ fn main() {
     let sphere4 = Shape::sphere(
         Vector3::new(-1.0, 0.0, -1.0),
         0.5,
-        Material::Metal {
-            albedo: Vector3::new(0.8, 0.8, 0.8),
-            fuzz: 1.0,
+        Material::Dielectric {
+            refractive_index: 1.5,
+        },
+    );
+    let sphere5 = Shape::sphere(
+        Vector3::new(-1.0, 0.0, -1.0),
+        -0.45,
+        Material::Dielectric {
+            refractive_index: 1.5,
         },
     );
 
-    let world = World(vec![sphere1, sphere2, sphere3, sphere4]);
+    let world = World(vec![sphere1, sphere2, sphere3, sphere4, sphere5]);
     let camera = Camera::new();
 
     for y in (0..height).rev() {
