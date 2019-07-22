@@ -32,6 +32,14 @@ impl Vector3 {
         }
     }
 
+    fn cross(&self, other: &Vector3) -> Vector3 {
+        Vector3::new(
+            self.y * other.z - self.z * other.y,
+            -(self.x * other.z - self.z * other.x),
+            self.x * other.y - self.y * other.x,
+        )
+    }
+
     fn dot(&self, other: &Vector3) -> f64 {
         self.x * other.x + self.y * other.y + self.z * other.z
     }
@@ -378,12 +386,20 @@ struct Camera {
 }
 
 impl Camera {
-    fn new() -> Self {
+    fn new(origin: Vector3, target: Vector3, up: Vector3, vfov: impl Into<f64>, aspect: impl Into<f64>) -> Self {
+        let theta = vfov.into() * std::f64::consts::PI / 180.0;
+        let half_height = (theta / 2.0).tan();
+        let half_width = aspect.into() * half_height;
+
+        let w = (origin - target).normalized();
+        let u = up.cross(&w).normalized();
+        let v = w.cross(&u);
+
         Camera {
-            origin: Vector3::new(0.0, 0.0, 0.0),
-            lower_left: Vector3::new(-2.0, -1.0, -1.0),
-            horizontal: Vector3::new(4.0, 0.0, 0.0),
-            vertical: Vector3::new(0.0, 2.0, 0.0),
+            origin,
+            lower_left: origin - u * half_width - v * half_height - w,
+            horizontal: u * 2.0 * half_width,
+            vertical: v * 2.0 * half_height,
         }
     }
 
@@ -460,7 +476,13 @@ fn main() {
     );
 
     let world = World(vec![sphere1, sphere2, sphere3, sphere4, sphere5]);
-    let camera = Camera::new();
+    let camera = Camera::new(
+        Vector3::new(-2, 2, 1),
+        Vector3::new(0, 0, -1),
+        Vector3::new(0, 1, 0),
+        30,
+        f64::from(width) / f64::from(height),
+    );
 
     for y in (0..height).rev() {
         for x in 0..width {
