@@ -2,6 +2,8 @@
 #![warn(clippy::all)]
 
 use rand::prelude::*;
+use rayon::prelude::*;
+use std::io::{self, Write};
 
 #[derive(Clone, Copy)]
 struct Vector3 {
@@ -11,6 +13,17 @@ struct Vector3 {
 }
 
 impl Vector3 {
+    const ZERO: Vector3 = Vector3 {
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+    };
+    const ONE: Vector3 = Vector3 {
+        x: 1.0,
+        y: 1.0,
+        z: 1.0,
+    };
+
     fn new(x: impl Into<f64>, y: impl Into<f64>, z: impl Into<f64>) -> Self {
         Vector3 {
             x: x.into(),
@@ -24,7 +37,7 @@ impl Vector3 {
 
         loop {
             let p = Vector3::new(rng.gen::<f64>(), rng.gen::<f64>(), rng.gen::<f64>()) * 2.0
-                - Vector3::new(1, 1, 1);
+                - Vector3::ONE;
 
             if p.squared_length() < 1.0 {
                 break p;
@@ -221,6 +234,23 @@ enum Material {
 }
 
 impl Material {
+    fn lambertian(albedo: Vector3) -> Self {
+        Material::Lambertian { albedo }
+    }
+
+    fn metal(albedo: Vector3, fuzz: impl Into<f64>) -> Self {
+        Material::Metal {
+            albedo,
+            fuzz: fuzz.into(),
+        }
+    }
+
+    fn dielectric(refractive_index: impl Into<f64>) -> Self {
+        Material::Dielectric {
+            refractive_index: refractive_index.into(),
+        }
+    }
+
     fn scatter(&self, ray: &Ray, hit: &Hit) -> Option<(Ray, Vector3)> {
         match *self {
             Material::Lambertian { albedo } => {
@@ -262,7 +292,7 @@ impl Material {
                     }
                     _ => Ray::new(hit.position, ray.direction.reflect(&hit.normal)),
                 };
-                let attenuation = Vector3::new(1.0, 1.0, 1.0);
+                let attenuation = Vector3::ONE;
 
                 Some((scattered, attenuation))
             }
@@ -441,13 +471,13 @@ fn color(ray: &Ray, world: &World, depth: i64) -> Vector3 {
             Some((ref scattered, attenuation)) if depth < 50 => {
                 attenuation * color(scattered, world, depth + 1)
             }
-            _ => Vector3::new(0, 0, 0),
+            _ => Vector3::ZERO,
         }
     } else {
         let normalized_direction = ray.direction.normalized();
         let t = 0.5 * (normalized_direction.y + 1.0);
 
-        Vector3::new(1.0, 1.0, 1.0) * (1.0 - t) + Vector3::new(0.5, 0.7, 1.0) * t
+        Vector3::ONE * (1.0 - t) + Vector3::new(0.5, 0.7, 1) * t
     }
 }
 
@@ -456,31 +486,18 @@ fn random_scene() -> World {
         Shape::sphere(
             Vector3::new(0, -1000, -1),
             1000,
-            Material::Lambertian {
-                albedo: Vector3::new(0.5, 0.5, 0.5),
-            },
+            Material::lambertian(Vector3::new(0.5, 0.5, 0.5)),
         ),
-        Shape::sphere(
-            Vector3::new(0, 1, 0),
-            1,
-            Material::Dielectric {
-                refractive_index: 1.5,
-            },
-        ),
+        Shape::sphere(Vector3::new(0, 1, 0), 1, Material::dielectric(1.5)),
         Shape::sphere(
             Vector3::new(-4, 1, 0),
             1,
-            Material::Lambertian {
-                albedo: Vector3::new(0.4, 0.2, 0.1),
-            },
+            Material::lambertian(Vector3::new(0.4, 0.2, 0.1)),
         ),
         Shape::sphere(
             Vector3::new(4, 1, 0),
             1,
-            Material::Metal {
-                albedo: Vector3::new(0.7, 0.6, 0.5),
-                fuzz: 0.0,
-            },
+            Material::metal(Vector3::new(0.7, 0.6, 0.5), 0),
         ),
     ];
 
@@ -495,44 +512,24 @@ fn random_scene() -> World {
             );
 
             if (center - Vector3::new(4, 0.2, 0)).length() > 0.9 {
-                match rng.gen::<f64>() {
-                    x if x >= 0.0 && x < 0.8 => {
-                        scene.push(Shape::sphere(
-                            center,
-                            0.2,
-                            Material::Lambertian {
-                                albedo: Vector3::new(
-                                    rng.gen::<f64>() * rng.gen::<f64>(),
-                                    rng.gen::<f64>() * rng.gen::<f64>(),
-                                    rng.gen::<f64>() * rng.gen::<f64>(),
-                                ),
-                            },
-                        ));
-                    }
-                    x if x >= 0.8 && x < 0.95 => {
-                        scene.push(Shape::sphere(
-                            center,
-                            0.2,
-                            Material::Metal {
-                                albedo: Vector3::new(
-                                    0.5 * (1.0 + rng.gen::<f64>()),
-                                    0.5 * (1.0 + rng.gen::<f64>()),
-                                    0.5 * (1.0 + rng.gen::<f64>()),
-                                ),
-                                fuzz: 0.5 * rng.gen::<f64>(),
-                            },
-                        ));
-                    }
-                    _ => {
-                        scene.push(Shape::sphere(
-                            center,
-                            0.2,
-                            Material::Dielectric {
-                                refractive_index: 1.5,
-                            },
-                        ));
-                    }
-                }
+                let material = match rng.gen::<f64>() {
+                    x if x >= 0.0 && x < 0.8 => Material::lambertian(Vector3::new(
+                        rng.gen::<f64>() * rng.gen::<f64>(),
+                        rng.gen::<f64>() * rng.gen::<f64>(),
+                        rng.gen::<f64>() * rng.gen::<f64>(),
+                    )),
+                    x if x >= 0.8 && x < 0.95 => Material::metal(
+                        Vector3::new(
+                            0.5 * (1.0 + rng.gen::<f64>()),
+                            0.5 * (1.0 + rng.gen::<f64>()),
+                            0.5 * (1.0 + rng.gen::<f64>()),
+                        ),
+                        0.5 * rng.gen::<f64>(),
+                    ),
+                    _ => Material::dielectric(1.5),
+                };
+
+                scene.push(Shape::sphere(center, 0.2, material));
             }
         }
     }
@@ -540,21 +537,17 @@ fn random_scene() -> World {
     World(scene)
 }
 
-fn main() {
+fn main() -> io::Result<()> {
     let width = 200;
     let height = 100;
     let num_samples = 100;
 
-    let mut rng = rand::thread_rng();
-
-    println!("P3");
-    println!("{} {}", width, height);
-    println!("255");
-
     let world = random_scene();
 
+    let start = std::time::Instant::now();
+
     let origin = Vector3::new(16, 2, 4);
-    let target = Vector3::new(0, 0, 0);
+    let target = Vector3::ZERO;
     let camera = Camera::new(
         origin,
         target,
@@ -565,26 +558,43 @@ fn main() {
         (origin - target).length(),
     );
 
-    for y in (0..height).rev() {
-        for x in 0..width {
+    let header = format!("P3\n{} {}\n255", width, height);
+    let pixels = (0..height * width)
+        .into_par_iter()
+        .map(|i| {
+            let mut rng = rand::thread_rng();
+
+            let y = height - i / width - 1;
+            let x = i % width;
+
+            // no noticable performance different switching to par_iter here, likely due to the fold
             let pixel = (0..num_samples).fold(Color::new(0, 0, 0), |result, _| {
                 let u = (f64::from(x) + rng.gen::<f64>()) / f64::from(width);
                 let v = (f64::from(y) + rng.gen::<f64>()) / f64::from(height);
 
-                let r = camera.ray(u, v);
-                let color = Color::from(color(&r, &world, 0));
+                let ray = camera.ray(u, v);
+                let color = Color::from(color(&ray, &world, 0));
 
                 result + color
             }) / f64::from(num_samples);
 
             let pixel = Color::new(pixel.r.sqrt(), pixel.g.sqrt(), pixel.b.sqrt());
 
-            println!(
+            format!(
                 "{} {} {}",
                 (pixel.r * 255.0) as u8,
                 (pixel.g * 255.0) as u8,
                 (pixel.b * 255.0) as u8
-            );
-        }
-    }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let ppm = format!("{}\n{}\n", header, pixels);
+    io::stdout().write_all(ppm.as_bytes())?;
+
+    let end = std::time::Instant::now();
+    io::stderr().write_all(format!("Finished rendering in {:?}.\n", end - start).as_bytes())?;
+
+    Ok(())
 }
